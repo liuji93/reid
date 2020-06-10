@@ -42,6 +42,6 @@ We achieve the following performance on Market1501:
 
 | Model name           |        mAP      | Rank-1 Accuracy|
 | ------------------   |---------------- | -------------- |
-|      baseline        |        85%      |      95%       |
+|      baseline        |        --%      |      --%       |
 |   improved baseline  |      40.5%      |      61.7%     |
 
