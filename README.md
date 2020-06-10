@@ -7,7 +7,7 @@ The implementation is based on keras (tensorflow backend).
 ## Requirements
 tensorflow==2.2.0 <br/>
 tensorflow_addons<br/>
-sciket-learn<br/>
+scikit-learn<br/>
 matplotlib<br/>
 numpy<br/>
 imgaug<br/>
