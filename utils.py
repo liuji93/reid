@@ -3,14 +3,6 @@ import cv2, random
 from sklearn.utils import shuffle as shuffle_tuple
 import imgaug as ia
 from imgaug import augmenters as iaa
-from tensorflow.python.keras.backend import set_session
-from tensorflow.keras import backend as K
-from tensorflow.keras.losses import categorical_crossentropy
-from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input
-from tensorflow.keras.optimizers import SGD
-from sklearn.preprocessing import normalize
-import tensorflow as tf
 sometimes = lambda aug: iaa.Sometimes(0.5, aug)
 seq = iaa.Sequential(
     [
@@ -199,7 +191,7 @@ def generator_batch_triplet_hard(img_path_list, img_label_list, num_classes,
         X_batch = X_batch / 255.
         X_batch = (X_batch - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
         y_batch = np.array(img_ids_sampled).astype(np.int32)
-        yield ([X_batch, y_batch], [Y_batch, y_batch, y_batch])
+        yield ([X_batch], [Y_batch, y_batch])
 
 
 def generator_batch_test(img_path_list, img_width, img_height, batch_size=32, shuffle=False):
@@ -231,47 +223,3 @@ def generator_batch_test(img_path_list, img_width, img_height, batch_size=32, sh
         X_batch = X_batch / 255.
         X_batch = (X_batch - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
         yield X_batch
-
-
-def cross_entropy_label_smoothing(y_true, y_pred):
-    label_smoothing = 0.2
-    return categorical_crossentropy(y_true, y_pred, label_smoothing=label_smoothing)
-
-
-def triplet_loss(y_gt, y_pred):
-    margin = 0.5
-    #y_pred = K.l2_normalize(y_pred, axis=1)
-    #print('y_pred shape: ', y_pred.shape)
-    assert y_pred.shape[1] % 3 == 0, 'concatenating error'
-    dim_num = int(y_pred.shape[1]//3)
-    anchor = K.l2_normalize(y_pred[:, :dim_num], axis=1)
-    positive = K.l2_normalize(y_pred[:, dim_num:2*dim_num], axis=1)
-    negative = K.l2_normalize(y_pred[:, 2*dim_num:3*dim_num], axis=1)
-    pos_anchor_dist = K.sum(K.square(positive-anchor), axis=1)
-    neg_anchor_dist = K.sum(K.square(negative-anchor), axis=1)
-    basic_loss = pos_anchor_dist - neg_anchor_dist + margin
-    loss = K.maximum(basic_loss, 0.0)
-    return loss
-
-
-def scheduler(epoch, lr):
-    if epoch < 80:
-        return lr
-    elif epoch == 80:
-        return lr*0.1
-    elif epoch < 90:
-        return lr
-    elif epoch == 90:
-        return lr*0.1
-    else:
-        return lr
-
-
-
-
-
-
-
-
-
-

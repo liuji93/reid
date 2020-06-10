@@ -5,13 +5,92 @@ import argparse
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tensorflow.keras.optimizers import SGD
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, normalize
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.layers import Dense, Activation, Input, Concatenate
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
-from utils import cross_entropy_label_smoothing, generator_batch_triplet, triplet_loss
+from tensorflow.keras.losses import categorical_crossentropy
+from tensorflow.keras import backend as K
+from utils import generator_batch_triplet, generator_batch_test
+from evaluate import evaluate
+
+def cross_entropy_label_smoothing(y_true, y_pred):
+    label_smoothing = 0.2
+    return categorical_crossentropy(y_true, y_pred, label_smoothing=label_smoothing)
+
+
+def triplet_loss(y_gt, y_pred):
+    margin = 0.5
+    #y_pred = K.l2_normalize(y_pred, axis=1)
+    #print('y_pred shape: ', y_pred.shape)
+    assert y_pred.shape[1] % 3 == 0, 'concatenating error'
+    dim_num = int(y_pred.shape[1]//3)
+    anchor = K.l2_normalize(y_pred[:, :dim_num], axis=1)
+    positive = K.l2_normalize(y_pred[:, dim_num:2*dim_num], axis=1)
+    negative = K.l2_normalize(y_pred[:, 2*dim_num:3*dim_num], axis=1)
+    pos_anchor_dist = K.sum(K.square(positive-anchor), axis=1)
+    neg_anchor_dist = K.sum(K.square(negative-anchor), axis=1)
+    basic_loss = pos_anchor_dist - neg_anchor_dist + margin
+    loss = K.maximum(basic_loss, 0.0)
+    return loss
+
+def Evaluate(args, model_path, batch_size=32):
+    def get_data_information(data_root):
+        img_path_list = []
+        img_name_list = []
+        img_cams_list = []
+        image_names = os.listdir(data_root)  # the best way is to use sorted list,i.e., sorted()
+        image_names = sorted(image_names)[:-1]
+        for item in image_names:
+            if item[-4:] == '.jpg':
+                img_path_list.append(os.path.join(data_root, item))
+                img_name_list.append(item.split('_')[0])
+                img_cams_list.append(item.split('c')[1][0])
+        return img_path_list, np.array(img_name_list), np.array(img_cams_list)
+
+        # build model to extract features
+    if args.USE_Label_Smoothing:
+        model = load_model(model_path, custom_objects= \
+            {'cross_entropy_label_smoothing': cross_entropy_label_smoothing,
+             'triplet_loss':triplet_loss})
+    else:
+        model = load_model(model_path, custom_objects= \
+            {'triplet_loss':triplet_loss})
+    model.summary()
+    cnn_model = model.get_layer('mobilenetv2_0.50_224')
+    dense_feature = cnn_model.get_layer('global_max_pooling2d').output
+    model_extract_features = Model(inputs=cnn_model.input, outputs=dense_feature)
+    model_extract_features.compile(loss='categorical_crossentropy',
+                                   optimizer=SGD(lr=0.1), metrics=['accuracy'])
+
+    #image_path, image_names, image_cams
+    query_img_list, query_name_list, query_cams_list = \
+        get_data_information(args.query_dir)
+    gallery_img_list, gallery_name_list, gallery_cams_list = \
+        get_data_information(args.gallery_dir)
+
+    # obtain features
+    query_generator = generator_batch_test(query_img_list, args.img_width, args.img_height,
+                                           batch_size=batch_size, shuffle=False)
+    query_features = model_extract_features.predict(query_generator, verbose=1,
+                    steps=len(query_img_list)//batch_size if len(query_img_list)%batch_size==0 \
+                    else len(query_img_list)//batch_size+1)
+    query_features = normalize(query_features, norm='l2')
+    assert len(query_img_list) == query_features.shape[0], "something wrong with query samples"
+
+    gallery_generator = generator_batch_test(gallery_img_list, args.img_width, args.img_height,
+                                             batch_size, shuffle=False)
+    gallery_features = model_extract_features.predict(gallery_generator,verbose=1,
+                        steps=len(gallery_img_list)//batch_size if len(gallery_img_list)%batch_size==0 \
+                        else len(gallery_img_list)//batch_size+1)
+    gallery_features = normalize(gallery_features, norm='l2')
+    assert len(gallery_img_list) == gallery_features.shape[0], "something wrong with gallery samples"
+    #result
+    evaluate(query_features, query_name_list, query_cams_list,
+             gallery_features, gallery_name_list, gallery_cams_list, args.dist_type)
+
 
 
 def main():
@@ -46,8 +125,7 @@ def main():
     anchor_softmax_output = Activation('softmax')(dense_anchor)
     triplet_model = Model(inputs=[anchor_input, positive_input, negative_input],
                           outputs=[anchor_softmax_output, merged_vector])
-
-    triplet_model.load_weights('triplet_weights.h5')
+    model_path = os.path.join(args.log_dir, 'triplet_weights.h5')
 
     # model compile
     optimizer = SGD(learning_rate=args.learning_rate)
@@ -61,7 +139,8 @@ def main():
                             metrics=['accuracy'])
 
     # save model
-    checkpoint = ModelCheckpoint('./triplet_weights.h5', monitor='val_activation_acc',
+    checkpoint = ModelCheckpoint(os.path.join(args.log_dir, 'triplet_weights.h5'),
+                                 monitor='val_activation_accuracy',
                                  verbose=1, save_best_only=True, mode='auto')
     #reduce_lr = ReduceLROnPlateau(monitor='val_activation_acc', patience=5, mode='auto')
     # data loader
@@ -80,30 +159,41 @@ def main():
                         shuffle = True,
                         epochs = args.num_epochs,
                         callbacks=[checkpoint])
-    #print(history.history)
 
     # Plot training & validation accuracy and loss values
     fig, ax = plt.subplots(2,1)
     ax[0].plot(history.history['loss'],color='b',label='Training loss')
-    ax[0].plot(history.history['val_activation_loss'],color='r',label='validation loss',axes=ax[0])
-    legend = ax[0].legend(loc='best',shadow=True)
+    ax[0].plot(history.history['val_loss'],color='r',label='validation loss',axes=ax[0])
+    legend = ax[0].legend(loc='best', shadow=True)
 
-    ax[1].plot(history.history['activation_acc'], color='b', label='Training accuracy')
-    ax[1].plot(history.history['val_activation_acc'], color='r', label='Validation accuracy')
+    ax[1].plot(history.history['activation_accuracy'], color='b', label='Training accuracy')
+    ax[1].plot(history.history['val_activation_accuracy'], color='r', label='Validation accuracy')
     legend = ax[1].legend(loc='best',shadow=True)
-    plt.savefig('./loss_acc.jpg')
-
+    plt.savefig(os.path.join(args.log_dir, 'loss_acc_triplet.jpg'))
+    #evaluation
+    print("Evaluating model...")
+    Evaluate(args, model_path=model_path, batch_size=32)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Triplet loss")
     # data
-    parser.add_argument('--data_root', type=str,
-            default='/data/PersonReID/market1501/bounding_box_train')
     parser.add_argument('--img_width', type=int, default='64')
     parser.add_argument('--img_height', type=int, default='128')
-    parser.add_argument('--learning_rate', type=float, default='0.001')
+    parser.add_argument('--learning_rate', type=float, default='0.01')
     parser.add_argument('--batch_size', type=int, default='128')
-    parser.add_argument('--num_epochs', type=int, default='30')
+    parser.add_argument('--num_epochs', type=int, default='100')
+    parser.add_argument('--num_instances', type=int, default='4')
     parser.add_argument('--USE_Label_Smoothing', type=bool, default=True)
+    parser.add_argument('--dist_type', type=str, default='euclidean')
+    working_dir = os.path.dirname(os.path.abspath(__file__))
+    parser.add_argument('--data_root', type=str,
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_train'))
+    parser.add_argument('--log_dir', type=str,
+            default=os.path.join(working_dir, 'logs'))
+    parser.add_argument('--query_dir', type=str,
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/query'))
+    parser.add_argument('--gallery_dir', type=str,
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_test'))
     main()
+
 

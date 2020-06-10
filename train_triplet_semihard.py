@@ -7,15 +7,17 @@ import matplotlib.pyplot as plt
 from tensorflow.keras.optimizers import SGD, Adam
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import normalize
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.layers import Dense, Activation, Input, Concatenate, Lambda, BatchNormalization
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.losses import categorical_crossentropy
 from tensorflow.keras import backend as K
 import tensorflow as tf
 import tensorflow_addons as tfa
-from utils import generator_batch_triplet_hard
+from utils import generator_batch_triplet_hard, generator_batch_test
+from evaluate import evaluate
 
 
 opt_ways = {
@@ -79,6 +81,63 @@ def lr_decay_warmup(epoch, initial_lrate):
         return 0.0000035
 
 
+def Evaluate(args, model_path, batch_size=32):
+    def get_data_information(data_root):
+        img_path_list = []
+        img_name_list = []
+        img_cams_list = []
+        image_names = os.listdir(data_root)  # the best way is to use sorted list,i.e., sorted()
+        image_names = sorted(image_names)[:-1]
+        for item in image_names:
+            if item[-4:] == '.jpg':
+                img_path_list.append(os.path.join(data_root, item))
+                img_name_list.append(item.split('_')[0])
+                img_cams_list.append(item.split('c')[1][0])
+        return img_path_list, np.array(img_name_list), np.array(img_cams_list)
+
+    ## build model to extract features
+    if args.USE_Label_Smoothing:
+        model = load_model(model_path, custom_objects= \
+            {'cross_entropy_label_smoothing': cross_entropy_label_smoothing,
+               'tripletSemihardloss':tripletSemihardloss})
+    else:
+        model = load_model(model_path, custom_objects= \
+            {'triplet_loss':tripletSemihardloss})
+    #model.summary()
+    cnn_input = model.input
+    dense_feature = model.get_layer('global_max_pooling2d').output
+    #print('111', model.input[0])
+    model_extract_features = Model(inputs=cnn_input, outputs=dense_feature)
+
+    model_extract_features.compile(loss=['categorical_crossentropy'],
+                                   optimizer=SGD(lr=0.1), metrics=['accuracy'])
+
+    #image_path, image_names, image_cams
+    query_img_list, query_name_list, query_cams_list = \
+        get_data_information(args.query_dir)
+    gallery_img_list, gallery_name_list, gallery_cams_list = \
+        get_data_information(args.gallery_dir)
+
+    # obtain features
+    query_generator = generator_batch_test(query_img_list, args.img_width, args.img_height,
+                                           batch_size=batch_size, shuffle=False)
+    query_features = model_extract_features.predict(query_generator, verbose=1,
+                    steps=len(query_img_list)//batch_size if len(query_img_list)%batch_size==0 \
+                    else len(query_img_list)//batch_size+1)
+    query_features = normalize(query_features, norm='l2')
+    assert len(query_img_list) == query_features.shape[0], "something wrong with query samples"
+
+    gallery_generator = generator_batch_test(gallery_img_list, args.img_width, args.img_height,
+                                             batch_size, shuffle=False)
+    gallery_features = model_extract_features.predict(gallery_generator,verbose=1,
+                        steps=len(gallery_img_list)//batch_size if len(gallery_img_list)%batch_size==0 \
+                        else len(gallery_img_list)//batch_size+1)
+    gallery_features = normalize(gallery_features, norm='l2')
+    assert len(gallery_img_list) == gallery_features.shape[0], "something wrong with gallery samples"
+
+    #result
+    evaluate(query_features, query_name_list, query_cams_list,
+             gallery_features, gallery_name_list, gallery_cams_list, args.dist_type)
 def main():
     args = parser.parse_args()
     image_names = os.listdir(args.data_root) #the best way is to use sorted list,i.e., sorted()
@@ -124,8 +183,8 @@ def main():
     #triplet_model.load_weights('triplet_hard_weights.h5')
     triplet_model.summary()
     # save model
-    checkpoint = ModelCheckpoint(os.path.join(args.log_dir, 'triplet_hard_weights.h5'),
-                                 monitor='val_dense_accuracy',
+    model_path = os.path.join(args.log_dir, 'triplet_semihard_weights.h5')
+    checkpoint = ModelCheckpoint(model_path, monitor='val_dense_accuracy',
                                  verbose=1, save_best_only=True, mode='auto')
     reduce_lr = LearningRateScheduler(lr_decay_warmup, verbose=1)
     # data loader
@@ -159,7 +218,11 @@ def main():
     ax[1].plot(history.history['dense_accuracy'], color='b', label='Training accuracy')
     ax[1].plot(history.history['val_dense_accuracy'], color='r', label='Validation accuracy')
     legend = ax[1].legend(loc='best', shadow=True)
-    plt.savefig('./loss_acc.jpg')
+    plt.savefig(os.path.join(args.log_dir, 'loss_acc_triplet_semihard.jpg'))
+
+    #evaluation
+    print("Evaluating model...")
+    Evaluate(args, model_path=model_path, batch_size=32)
 
 
 if __name__ == '__main__':
@@ -175,10 +238,15 @@ if __name__ == '__main__':
     parser.add_argument('--USE_Semihard', type=bool, default=True)
     parser.add_argument('--USE_BNNeck', type=bool, default=True)
     parser.add_argument('--optimizer', type=str, default='adam')
+    parser.add_argument('--dist_type', type=str, default='euclidean')
     working_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument('--data_root', type=str,
-            default=os.path.join(working_dir, 'dataset/market1501/bounding_box_train'))
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_train'))
     parser.add_argument('--log_dir', type=str,
-            default=os.path.join(working_dir, 'log'))
+            default=os.path.join(working_dir, 'logs'))
+    parser.add_argument('--query_dir', type=str,
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/query'))
+    parser.add_argument('--gallery_dir', type=str,
+            default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_test'))
     main()
 
