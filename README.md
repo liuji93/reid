@@ -18,11 +18,11 @@ cv2<br/>
 
 To train the baseline model (MoblieNetV2 backbone and Crossentropy+Triplet loss), run this command:
 ```train
-python train_triplet.py --learning_rate 0.01
+python train_triplet.py
 ```
 To train the improved baseline model, run this command:
 ```train
-python train_triplet_semihard.py --USE_Semihard True --USE_BNNeck True 
+python train_triplet_semihard.py 
 ```
 
 
