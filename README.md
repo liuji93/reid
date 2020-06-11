@@ -22,7 +22,7 @@ python train_triplet.py --learning_rate 0.01
 ```
 To train the improved baseline model, run this command:
 ```train
-python train_triplet_semiihard.py --USE_Semihard True --USE_BNNeck True 
+python train_triplet_semihard.py --USE_Semihard True --USE_BNNeck True 
 ```
 
 
