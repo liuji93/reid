@@ -16,7 +16,7 @@ from tensorflow.keras.losses import categorical_crossentropy
 from tensorflow.keras import backend as K
 import tensorflow as tf
 import tensorflow_addons as tfa
-from utils import generator_batch_triplet_hard, generator_batch_test
+from dataloader import generator_batch_triplet_hard, generator_batch_test
 from evaluate import evaluate
 
 
@@ -137,7 +137,7 @@ def Evaluate(args, model_path, batch_size=32):
 
     #result
     evaluate(query_features, query_name_list, query_cams_list,
-             gallery_features, gallery_name_list, gallery_cams_list, args.dist_type)
+             gallery_features, gallery_name_list, gallery_cams_list)
 def main():
     args = parser.parse_args()
     image_names = os.listdir(args.data_root) #the best way is to use sorted list,i.e., sorted()
@@ -238,7 +238,6 @@ if __name__ == '__main__':
     parser.add_argument('--USE_Semihard', type=bool, default=True)
     parser.add_argument('--USE_BNNeck', type=bool, default=True)
     parser.add_argument('--optimizer', type=str, default='adam')
-    parser.add_argument('--dist_type', type=str, default='euclidean')
     working_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument('--data_root', type=str,
             default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_train'))

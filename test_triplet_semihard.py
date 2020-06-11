@@ -1,8 +1,7 @@
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.optimizers import SGD
-from utils import cross_entropy_label_smoothing
-from train_triplet_semihard import tripletSemihardloss
-from utils import generator_batch_test
+from train_triplet_semihard import tripletSemihardloss, cross_entropy_label_smoothing
+from dataloader import generator_batch_test
 from evaluate import evaluate
 from sklearn.preprocessing import normalize
 import os, argparse
@@ -65,7 +64,7 @@ def main():
     assert len(gallery_img_list) == gallery_features.shape[0], "something wrong with gallery samples"
     #evaluate
     evaluate(query_features, query_name_list, query_cams_list,
-             gallery_features, gallery_name_list, gallery_cams_list, args.dist_type)
+             gallery_features, gallery_name_list, gallery_cams_list)
 
 
 if __name__ == '__main__':
@@ -82,6 +81,5 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default='0.01')
     parser.add_argument('--batch_size', type=int, default='128')
     parser.add_argument('--USE_Label_Smoothing', type=bool, default=True)
-    parser.add_argument('--dist_type', type=str, default='cosine')
     main()
 

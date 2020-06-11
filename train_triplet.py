@@ -4,17 +4,27 @@ import matplotlib
 import argparse
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.optimizers import SGD, Adam
 from sklearn.preprocessing import LabelEncoder, normalize
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
-from tensorflow.keras.layers import Dense, Activation, Input, Concatenate
+from tensorflow.keras.layers import Dense, Activation, Input, Concatenate,BatchNormalization
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.losses import categorical_crossentropy
 from tensorflow.keras import backend as K
-from utils import generator_batch_triplet, generator_batch_test
+from dataloader import generator_batch_triplet, generator_batch_test
 from evaluate import evaluate
+
+def lr_decay_warmup(epoch, initial_lrate):
+    if epoch <= 11:
+        return 0.00035*0.1*(epoch+1)
+    if epoch >= 12 and epoch <= 41:
+        return 0.00035
+    if epoch >= 42 and epoch <= 71:
+        return 0.000035
+    if epoch >= 72:
+        return 0.0000035
 
 def cross_entropy_label_smoothing(y_true, y_pred):
     label_smoothing = 0.2
@@ -89,7 +99,7 @@ def Evaluate(args, model_path, batch_size=32):
     assert len(gallery_img_list) == gallery_features.shape[0], "something wrong with gallery samples"
     #result
     evaluate(query_features, query_name_list, query_cams_list,
-             gallery_features, gallery_name_list, gallery_cams_list, args.dist_type)
+             gallery_features, gallery_name_list, gallery_cams_list)
 
 
 
@@ -120,15 +130,20 @@ def main():
     negative_embedding = cnn_model(negative_input)
     merged_vector = Concatenate(axis=-1, name='triplet')([anchor_embedding, positve_embedding, negative_embedding])
     #print('merged_vector shape: ', merged_vector.shape)
-    dense_anchor = Dense(num_person_ids)(anchor_embedding)
+    #dense_anchor = Dense(num_person_ids)(anchor_embedding)
 
-    anchor_softmax_output = Activation('softmax')(dense_anchor)
+    #anchor_softmax_output = Activation('softmax')(dense_anchor)
+    if args.USE_BNNeck:
+        anchor_embedding_bn = BatchNormalization(name= 'feature_bn')(anchor_embedding)
+        anchor_softmax_output = Dense(num_person_ids, activation='softmax')(anchor_embedding_bn)
+    else:
+        anchor_softmax_output = Dense(num_person_ids, activation='softmax')(anchor_embedding)
     triplet_model = Model(inputs=[anchor_input, positive_input, negative_input],
                           outputs=[anchor_softmax_output, merged_vector])
     model_path = os.path.join(args.log_dir, 'triplet_weights.h5')
 
     # model compile
-    optimizer = SGD(learning_rate=args.learning_rate)
+    optimizer = Adam(learning_rate=args.learning_rate)
     if args.USE_Label_Smoothing:
         triplet_model.compile(loss=[cross_entropy_label_smoothing, triplet_loss], optimizer=optimizer,
                             loss_weights=[1, 1],
@@ -140,9 +155,9 @@ def main():
 
     # save model
     checkpoint = ModelCheckpoint(os.path.join(args.log_dir, 'triplet_weights.h5'),
-                                 monitor='val_activation_accuracy',
+                                 monitor='val_dense_accuracy',
                                  verbose=1, save_best_only=True, mode='auto')
-    #reduce_lr = ReduceLROnPlateau(monitor='val_activation_acc', patience=5, mode='auto')
+    reduce_lr = LearningRateScheduler(lr_decay_warmup, verbose=1)
     # data loader
     train_generator = generator_batch_triplet(train_img_path, train_person_ids, num_person_ids,
                                       args.img_width, args.img_height, args.batch_size, shuffle=True, aug=True)
@@ -158,7 +173,7 @@ def main():
                         verbose = 2,
                         shuffle = True,
                         epochs = args.num_epochs,
-                        callbacks=[checkpoint])
+                        callbacks=[checkpoint, reduce_lr])
 
     # Plot training & validation accuracy and loss values
     fig, ax = plt.subplots(2,1)
@@ -166,8 +181,8 @@ def main():
     ax[0].plot(history.history['val_loss'],color='r',label='validation loss',axes=ax[0])
     legend = ax[0].legend(loc='best', shadow=True)
 
-    ax[1].plot(history.history['activation_accuracy'], color='b', label='Training accuracy')
-    ax[1].plot(history.history['val_activation_accuracy'], color='r', label='Validation accuracy')
+    ax[1].plot(history.history['dense_accuracy'], color='b', label='Training accuracy')
+    ax[1].plot(history.history['val_dense_accuracy'], color='r', label='Validation accuracy')
     legend = ax[1].legend(loc='best',shadow=True)
     plt.savefig(os.path.join(args.log_dir, 'loss_acc_triplet.jpg'))
     #evaluation
@@ -179,12 +194,12 @@ if __name__ == '__main__':
     # data
     parser.add_argument('--img_width', type=int, default='64')
     parser.add_argument('--img_height', type=int, default='128')
-    parser.add_argument('--learning_rate', type=float, default='0.01')
+    parser.add_argument('--learning_rate', type=float, default='0.00035')
     parser.add_argument('--batch_size', type=int, default='128')
-    parser.add_argument('--num_epochs', type=int, default='100')
+    parser.add_argument('--num_epochs', type=int, default='120')
     parser.add_argument('--num_instances', type=int, default='4')
     parser.add_argument('--USE_Label_Smoothing', type=bool, default=True)
-    parser.add_argument('--dist_type', type=str, default='euclidean')
+    parser.add_argument('--USE_BNNeck', type=bool, default=True)
     working_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument('--data_root', type=str,
             default=os.path.join(working_dir, 'datasets/Market-1501-v15.09.15/bounding_box_train'))
