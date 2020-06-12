@@ -59,7 +59,7 @@ def load_img_batch(img_batch_list, label_batch_list, num_classes, img_width, img
     Y_batch = np.zeros((N, num_classes))
     for i, img_path in enumerate(img_batch_list):
         img = cv2.imread(img_path)
-        #img = cv2.resize(img,(img_height, img_width))
+        img = cv2.resize(img, (img_width, img_height))
         img[:,:,[0,1,2]] = img[:,:,[2,1,0]]
         X_batch[i,:,:,:] = img
         if label_batch_list is not None:
@@ -180,7 +180,7 @@ def generator_batch_triplet_hard(img_path_list, img_label_list, num_classes,
 
         for i, img_path in enumerate(img_path_sampled):
             img = cv2.imread(img_path)
-            # img = cv2.resize(img,(img_height, img_width))
+            img = cv2.resize(img, (img_width, img_height))
             img[:, :, [0, 1, 2]] = img[:, :, [2, 1, 0]]
             X_batch[i, :, :, :] = img
             if img_ids_sampled is not None:
@@ -216,7 +216,7 @@ def generator_batch_test(img_path_list, img_width, img_height, batch_size=32, sh
         for i, img_path in enumerate(img_batch_list):
             img = cv2.imread(img_path)
             if img.shape[:2] != (img_height, img_width):
-                img = cv2.resize(img, (img_height, img_width))
+                img = cv2.resize(img, (img_width, img_height))
             img[:, :, [0, 1, 2]] = img[:, :, [2, 1, 0]]
             X_batch[i, :, :, :] = img
         # normalization
